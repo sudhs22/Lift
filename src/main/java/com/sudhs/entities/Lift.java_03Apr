@@ -1,0 +1,138 @@
+package com.sudhs.entities;
+
+import com.sudhs.builder.BuildingBuilder;
+import lombok.Getter;
+import lombok.Setter;
+import org.apache.commons.collections4.CollectionUtils;
+import org.apache.log4j.LogManager;
+import org.apache.log4j.Logger;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Objects;
+import java.util.stream.Collectors;
+
+import static com.sudhs.util.Helper.waitForSeconds;
+
+@Getter
+@Setter
+public class Lift extends Thread{
+    private static final Logger logger = LogManager.getLogger(Lift.class);
+
+    private Integer currentFloor;
+    private LiftPanel liftPanel;
+    private boolean doorOpen;
+    private Direction motionDirection;
+
+    @Override
+    public void run() {
+        Building building = BuildingBuilder.getFullyConstructedBuilding();
+        Lift lift = building.getLift();
+        logger.info("Lift is about to start functioning");
+        waitForSeconds(2000);
+        long defaultSleepTime = 5000L;
+        long incrementalSleepTime = defaultSleepTime;
+        while(true){
+            // Business logic goes here.
+            // 1. If inside or outside button is pressed, go into an "if" loop and move the lift. Else just sleep.
+            List<Integer> pressedLiftButtons = liftPanel.getFloorNumberButtons().stream()
+                    .filter(liftButton -> liftButton.isSelected)
+                    .map(LiftButton::getFloorNumber)
+                    .collect(Collectors.toList());
+
+            List<Integer> pressedFloorButtons = building.getFloors().stream()
+                    .filter(floor -> (floor.getFloorPanel().getUpButton().isPressed() || floor.getFloorPanel().getDownButton().isPressed()))
+                    .map(Floor::getFloorNumber)
+                    .collect(Collectors.toList());
+
+            List<Integer> allPressedButtons = new ArrayList<>();
+            allPressedButtons.addAll(pressedLiftButtons);
+            allPressedButtons.addAll(pressedFloorButtons);
+
+            if(!CollectionUtils.isEmpty(allPressedButtons)) {
+            // 2. Find the nearest floor to move the lift to.
+                //TODO: Rework the entire logic. It looks like shit.
+                Integer nearestUpFloor = null;
+                Integer nearestDownFloor = null;
+                Integer nearestFloor = null;
+
+                for(Integer liftButton : allPressedButtons){
+                    int diff = liftButton - getCurrentFloor();
+                    if((diff > 0) && (nearestUpFloor == null || nearestUpFloor > liftButton))
+                        nearestUpFloor = liftButton;
+
+                    if((diff <= 0) && (nearestDownFloor == null || nearestDownFloor > liftButton))
+                        nearestDownFloor = liftButton;
+                }
+
+                switch (lift.getMotionDirection()) {
+                    case DOWN:
+                        if(nearestDownFloor != null) {
+                            nearestFloor = nearestDownFloor;
+                            break;
+                        }
+                    case UP:
+                        if(nearestDownFloor != null) {
+                            nearestFloor = nearestUpFloor;
+                            break;
+                        }
+                    //TODO: Especially improve the below crappy logic you wrote.
+                    case STATIONARY:
+                        if(nearestDownFloor == null)
+                            nearestFloor = nearestUpFloor;
+                        else if(nearestUpFloor == null)
+                            nearestFloor = nearestDownFloor;
+                        else
+                            nearestFloor = (currentFloor-nearestDownFloor) < (nearestUpFloor-currentFloor) ? nearestDownFloor : nearestUpFloor;
+                        break;
+                    default:
+                        break;
+                }
+
+logger.info("Nearest Floor calculation. NearestUpFloor:" + nearestUpFloor + " nearestDownFloor:" + nearestDownFloor + " nearestFloor:" + nearestFloor + "   Lift Direction is :: " + lift.getMotionDirection().name());
+
+                if(nearestFloor == null) {
+                    logger.info("If the nearestFloor is null. Who called the lift?");
+                    //TODO: Better logic. Read the entire logic and think of a better way.
+                    lift.setMotionDirection(Direction.STATIONARY);
+                    logger.info("Pressed buttons are ------> " + allPressedButtons);
+                    logger.info("Lift is at floor ------> " + lift.getCurrentFloor());
+                    logger.info("NEAREST CALCULATED FLOOR IS NULL --------------------> . Going back now.");
+                    continue;
+                }
+            // 3. Now that we found the nearest floor, what are we waiting for, move the lift. Decide which direction.
+                if(currentFloor - nearestFloor >= 0) {
+                    lift.setMotionDirection(Direction.DOWN);
+                    for(int x= currentFloor; x >= nearestFloor; x--){
+                        //set the current floor of the lift
+                        lift.setCurrentFloor(x);
+                        logger.info("Moving Down. Lift is at floor :: " + x);
+                        waitForSeconds(2000);
+                    }
+                    lift.getLiftPanel().getFloorNumberButtons().get(lift.getCurrentFloor()).setSelected(false);
+                    building.getFloors().get(lift.getCurrentFloor()).getFloorPanel().getDownButton().setPressed(false);
+                } else {
+                    lift.setMotionDirection(Direction.UP);
+                    for(int x= currentFloor; x <= nearestFloor; x++){
+                        //set the current floor of the lift
+                        lift.setCurrentFloor(x);
+                        logger.info("Moving Up. Lift is at floor :: " + x);
+                        waitForSeconds(2000);
+                    }
+                    lift.getLiftPanel().getFloorNumberButtons().get(lift.getCurrentFloor()).setSelected(false);
+                    building.getFloors().get(lift.getCurrentFloor()).getFloorPanel().getUpButton().setPressed(false);
+                }
+                logger.info("Door Opening ...");
+                waitForSeconds(5000);
+                logger.info("Door Closing ...");
+                waitForSeconds(1000);
+                incrementalSleepTime = defaultSleepTime;
+            } else {
+                lift.setMotionDirection(Direction.STATIONARY);
+                incrementalSleepTime = (incrementalSleepTime < 60000) ? (incrementalSleepTime * 2) : defaultSleepTime;
+                waitForSeconds(incrementalSleepTime);
+                logger.info("Waiting for someone to call the Lift after : " + incrementalSleepTime);
+            }
+        }
+    }
+}
